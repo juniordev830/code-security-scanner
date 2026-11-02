@@ -10,7 +10,10 @@ Analisador estático **somente leitura**, baseado em regras; procura construçõ
 
 ```bash
 python scanner.py ./meu-projeto
+python scanner.py ./meu-projeto --exclude fixtures --fail-on medium
 ```
+
+Use `--exclude` com nomes de pastas para ignorar diretórios adicionais em qualquer nível. O argumento pode ser repetido. Com `--fail-on medium`, achados médios e altos retornam código 1. O padrão continua sendo `high`, e `none` mantém código 0 quando há achados.
 
 ## Testes
 
