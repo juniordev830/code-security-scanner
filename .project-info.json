@@ -1,0 +1,7 @@
+{
+  "name": "code-security-scanner",
+  "title": "Code Security Scanner",
+  "stage": "MVP inicial",
+  "owner": "juniordev830",
+  "publishing_requires_authentication": true
+}
