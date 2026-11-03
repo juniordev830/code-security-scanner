@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from scanner import scan
+from scanner import sarif_report, scan
 
 class ScannerTests(unittest.TestCase):
     def test_flags_dangerous_patterns_without_running_code(self):
@@ -12,6 +12,15 @@ class ScannerTests(unittest.TestCase):
             found = scan(root)
             self.assertEqual({x['rule'] for x in found}, {'PY-EVAL', 'WEB-INNERHTML'})
             self.assertTrue(all(x['line'] == 1 for x in found))
+    def test_serializes_findings_as_sarif(self):
+        report = sarif_report([{
+            'file': 'app.py', 'line': 4, 'rule': 'PY-EVAL',
+            'severity': 'high', 'message': 'Dynamic Python execution'
+        }])
+        self.assertEqual(report['version'], '2.1.0')
+        self.assertEqual(report['runs'][0]['results'][0]['ruleId'], 'PY-EVAL')
+        self.assertEqual(report['runs'][0]['results'][0]['locations'][0]['physicalLocation']['region']['startLine'], 4)
+
     def test_skips_dependencies(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
