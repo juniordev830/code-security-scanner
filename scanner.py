@@ -14,6 +14,39 @@ EXTENSIONS = {'.py', '.js', '.ts', '.jsx', '.tsx'}
 SKIP = {'.git', 'node_modules', '.venv', 'dist', 'build', '__pycache__'}
 MAX_FILE_BYTES = 256_000
 
+
+def sarif_report(findings: list[dict]) -> dict:
+    """Convert heuristic findings to SARIF 2.1.0 for CI code-scanning uploads."""
+    levels = {'high': 'error', 'medium': 'warning', 'low': 'note'}
+    rules = {}
+    results = []
+    for finding in findings:
+        rule_id = finding['rule']
+        rules.setdefault(rule_id, {
+            'id': rule_id,
+            'shortDescription': {'text': finding['message']},
+            'defaultConfiguration': {'level': levels.get(finding['severity'], 'warning')},
+        })
+        results.append({
+            'ruleId': rule_id,
+            'level': levels.get(finding['severity'], 'warning'),
+            'message': {'text': finding['message']},
+            'locations': [{
+                'physicalLocation': {
+                    'artifactLocation': {'uri': finding['file']},
+                    'region': {'startLine': finding['line']},
+                }
+            }],
+        })
+    return {
+        '$schema': 'https://json.schemastore.org/sarif-2.1.0.json',
+        'version': '2.1.0',
+        'runs': [{
+            'tool': {'driver': {'name': 'code-security-scanner', 'rules': list(rules.values())}},
+            'results': results,
+        }],
+    }
+
 def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
     root = root.resolve()
     skipped = SKIP | (exclude or set())
@@ -44,6 +77,8 @@ def main() -> int:
                      help='skip an additional directory name (repeatable)')
     cli.add_argument('--fail-on', choices=('high', 'medium', 'none'), default='high',
                      help='minimum severity that returns exit code 1 (default: high)')
+    cli.add_argument('--format', choices=('json', 'sarif'), default='json',
+                     help='output format for findings (default: json)')
     args = cli.parse_args()
     if any(not name or name in {'.', '..'} or '/' in name or '\\' in name for name in args.exclude):
         cli.error('exclude must be a directory name without path separators')
@@ -51,7 +86,11 @@ def main() -> int:
     if not path.is_dir():
         cli.error('directory not found')
     findings = scan(path, exclude=set(args.exclude))
-    print(json.dumps({'findings': findings, 'total': len(findings)}, indent=2))
+    report = sarif_report(findings) if args.format == 'sarif' else {
+        'findings': findings,
+        'total': len(findings),
+    }
+    print(json.dumps(report, indent=2))
     severities = {'high': 2, 'medium': 1}
     thresholds = {'high': 2, 'medium': 1, 'none': 3}
     return 1 if any(severities[x['severity']] >= thresholds[args.fail_on] for x in findings) else 0
