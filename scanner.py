@@ -5,12 +5,15 @@ import json
 import re
 from pathlib import Path
 
+PYTHON = frozenset({'.py'})
+JAVASCRIPT = frozenset({'.js', '.ts', '.jsx', '.tsx'})
 RULES = (
-    ('PY-EVAL', 'high', re.compile(r'\b(?:eval|exec)\s*\('), 'Dynamic Python execution'),
-    ('PY-SHELL', 'high', re.compile(r'\bshell\s*=\s*True\b'), 'Shell execution enabled'),
-    ('WEB-INNERHTML', 'medium', re.compile(r'\.innerHTML\s*='), 'Review DOM HTML insertion'),
+    ('PY-EVAL', 'high', re.compile(r'\b(?:eval|exec)\s*\('), 'Dynamic Python execution', PYTHON),
+    ('PY-SHELL', 'high', re.compile(r'\bshell\s*=\s*True\b'), 'Shell execution enabled', PYTHON),
+    ('JS-EVAL', 'high', re.compile(r'\beval\s*\('), 'Dynamic JavaScript execution', JAVASCRIPT),
+    ('WEB-INNERHTML', 'medium', re.compile(r'\.innerHTML\s*='), 'Review DOM HTML insertion', JAVASCRIPT),
 )
-EXTENSIONS = {'.py', '.js', '.ts', '.jsx', '.tsx'}
+EXTENSIONS = PYTHON | JAVASCRIPT
 SKIP = {'.git', 'node_modules', '.venv', 'dist', 'build', '__pycache__'}
 MAX_FILE_BYTES = 256_000
 
@@ -63,8 +66,8 @@ def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
         except (OSError, UnicodeDecodeError):
             continue
         for line_number, line in enumerate(source.splitlines(), 1):
-            for rule_id, severity, pattern, message in RULES:
-                if pattern.search(line):
+            for rule_id, severity, pattern, message, extensions in RULES:
+                if file.suffix.lower() in extensions and pattern.search(line):
                     findings.append({'file': file.relative_to(root).as_posix(),
                                      'line': line_number, 'rule': rule_id,
                                      'severity': severity, 'message': message})
