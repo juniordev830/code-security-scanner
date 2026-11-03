@@ -12,6 +12,17 @@ class ScannerTests(unittest.TestCase):
             found = scan(root)
             self.assertEqual({x['rule'] for x in found}, {'PY-EVAL', 'WEB-INNERHTML'})
             self.assertTrue(all(x['line'] == 1 for x in found))
+    def test_rules_match_their_language(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root/'web.js').write_text('eval(source);\nshell=True;\n', encoding='utf-8')
+            (root/'worker.py').write_text('exec(source)\nelement.innerHTML = text\n', encoding='utf-8')
+            rules = {}
+            for finding in scan(root):
+                rules.setdefault(finding['file'], set()).add(finding['rule'])
+            self.assertEqual(rules['web.js'], {'JS-EVAL'})
+            self.assertEqual(rules['worker.py'], {'PY-EVAL'})
+
     def test_serializes_findings_as_sarif(self):
         report = sarif_report([{
             'file': 'app.py', 'line': 4, 'rule': 'PY-EVAL',
