@@ -1,6 +1,6 @@
 # Code Security Scanner
 
-Analisador estático **somente leitura**, baseado em regras; procura construções que merecem revisão em Python/JavaScript/TypeScript. Emite JSON com arquivo, linha, severidade e regra.
+Analisador estático **somente leitura**, baseado em regras; procura construções que merecem revisão em Python/JavaScript/TypeScript. Emite JSON ou SARIF com arquivo, linha, severidade e regra. Regras Python são aplicadas apenas a `.py`, e as regras JavaScript/TypeScript apenas aos respectivos arquivos.
 
 ## Estado
 
@@ -11,6 +11,7 @@ Analisador estático **somente leitura**, baseado em regras; procura construçõ
 ```bash
 python scanner.py ./meu-projeto
 python scanner.py ./meu-projeto --exclude fixtures --fail-on medium
+python scanner.py ./meu-projeto --format sarif --fail-on none > report.sarif
 ```
 
 Use `--exclude` com nomes de pastas para ignorar diretórios adicionais em qualquer nível. O argumento pode ser repetido. Com `--fail-on medium`, achados médios e altos retornam código 1. O padrão continua sendo `high`, e `none` mantém código 0 quando há achados.
@@ -29,7 +30,7 @@ Regras simples geram falsos positivos e falsos negativos; nunca executa os arqui
 
 ## Evolução planejada
 
-Integrar Semgrep e scanners de dependências, supressões justificadas e saída SARIF para GitHub Code Scanning.
+Integrar Semgrep e scanners de dependências, supressões justificadas e configuração de upload dos relatórios SARIF para o GitHub Code Scanning.
 
 ---
 Projeto de Engenharia de Software mantido na conta [juniordev830](https://github.com/juniordev830).
