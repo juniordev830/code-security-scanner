@@ -44,9 +44,9 @@ class ScannerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'formatted.py').write_text(
-                'plain = "eval(ignored)"\\n'
-                'dynamic = f"{eval(user_input)}"\\n'
-                'raw_dynamic = rf"value:{exec(code)}"\\n',
+                'plain = "eval(ignored)"\n'
+                'dynamic = f"{eval(user_input)}"\n'
+                'raw_dynamic = rf"value:{exec(code)}"\n',
                 encoding='utf-8',
             )
             found = scan(root)
