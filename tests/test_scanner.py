@@ -23,6 +23,23 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(rules['web.js'], {'JS-EVAL'})
             self.assertEqual(rules['worker.py'], {'PY-EVAL'})
 
+    def test_ignores_python_comments_and_literal_strings_without_losing_line_numbers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'examples.py').write_text(
+                '# eval(untrusted)\\n'
+                'description = "shell=True and exec(code)"\\n'
+                'documentation = """\\n'
+                'eval(malicious)\\n'
+                '"""\\n'
+                'result = eval(user_input)  # exec(ignored)\\n'
+                'subprocess.run(argv, shell=True)\\n',
+                encoding='utf-8',
+            )
+            found = scan(root)
+            self.assertEqual([(x['rule'], x['line']) for x in found],
+                             [('PY-EVAL', 6), ('PY-SHELL', 7)])
+
     def test_serializes_findings_as_sarif(self):
         report = sarif_report([{
             'file': 'app.py', 'line': 4, 'rule': 'PY-EVAL',
