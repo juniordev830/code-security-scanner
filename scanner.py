@@ -88,11 +88,10 @@ def mask_python_literals(source: str) -> str:
 
 
 def mask_javascript_literals(source: str) -> str:
-    """Mask comments and literal text while preserving JS template expressions.
+    """Mask JS comments and literal text, preserving template expressions.
 
-    This is a lightweight heuristic, not a full JavaScript/TypeScript lexer.
-    If the input has unfinished strings/templates/comments, keep the raw text
-    instead of silently hiding security findings.
+    This is a heuristic, not a full JavaScript/TypeScript parser. If syntax is
+    unfinished, preserve raw source instead of silently hiding findings.
     """
     masked = list(source)
     length = len(source)
@@ -138,7 +137,47 @@ def mask_javascript_literals(source: str) -> str:
             elif source[cursor] == chr(96):
                 hide(cursor, cursor + 1)
                 return cursor + 1
-            elif source.startswith('
+            elif source.startswith(chr(36) + '{', cursor):
+                hide(cursor, cursor + 2)
+                cursor = code(cursor + 2, template_expr=True)
+            else:
+                hide(cursor, cursor + 1)
+                cursor += 1
+        raise ValueError('unfinished template')
+
+    def code(start: int, template_expr: bool = False) -> int:
+        depth = 1 if template_expr else 0
+        cursor = start
+        while cursor < length:
+            if source[cursor] in ("'", '"'):
+                cursor = quoted(cursor)
+            elif source[cursor] == chr(96):
+                cursor = template(cursor)
+            elif source[cursor] == '/' and cursor + 1 < length and source[cursor + 1] in '/*':
+                cursor = comment(cursor)
+            elif template_expr and source[cursor] == '{':
+                depth += 1
+                cursor += 1
+            elif template_expr and source[cursor] == '}':
+                depth -= 1
+                if depth == 0:
+                    hide(cursor, cursor + 1)
+                    return cursor + 1
+                cursor += 1
+            else:
+                cursor += 1
+        if template_expr:
+            raise ValueError('unfinished template interpolation')
+        return cursor
+
+    try:
+        code(0)
+    except ValueError:
+        return source
+    return ''.join(masked)
+
+
+def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
     root = root.resolve()
     skipped = SKIP | (exclude or set())
     findings = []
