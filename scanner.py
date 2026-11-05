@@ -1,8 +1,10 @@
 """Bounded, read-only static text scanner; heuristic findings, not proof of exploits."""
 from __future__ import annotations
 import argparse
+import io
 import json
 import re
+import tokenize
 from pathlib import Path
 
 PYTHON = frozenset({'.py'})
@@ -50,6 +52,31 @@ def sarif_report(findings: list[dict]) -> dict:
         }],
     }
 
+def mask_python_literals(source: str) -> str:
+    """Mask Python comments and strings, retaining line numbers for findings.
+
+    Falls back to the raw heuristic for incomplete or invalid Python, rather
+    than silently dropping findings while the file is being edited.
+    """
+    lines = source.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+    masked = list(source)
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type not in (tokenize.STRING, tokenize.COMMENT):
+                continue
+            start = offsets[token.start[0] - 1] + token.start[1]
+            end = offsets[token.end[0] - 1] + token.end[1]
+            for index in range(start, end):
+                if masked[index] not in '\\r\\n':
+                    masked[index] = ' '
+    except (tokenize.TokenError, IndentationError):
+        return source
+    return ''.join(masked)
+
+
 def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
     root = root.resolve()
     skipped = SKIP | (exclude or set())
@@ -65,7 +92,8 @@ def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
             source = file.read_text(encoding='utf-8')
         except (OSError, UnicodeDecodeError):
             continue
-        for line_number, line in enumerate(source.splitlines(), 1):
+        searchable = mask_python_literals(source) if file.suffix.lower() in PYTHON else source
+        for line_number, line in enumerate(searchable.splitlines(), 1):
             for rule_id, severity, pattern, message, extensions in RULES:
                 if file.suffix.lower() in extensions and pattern.search(line):
                     findings.append({'file': file.relative_to(root).as_posix(),
