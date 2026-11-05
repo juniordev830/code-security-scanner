@@ -40,6 +40,21 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual([(x['rule'], x['line']) for x in found],
                              [('PY-EVAL', 6), ('PY-SHELL', 7)])
 
+    def test_fstring_interpolations_are_scanned_as_executable_python(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'formatted.py').write_text(
+                'plain = "eval(ignored)"\\n'
+                'dynamic = f"{eval(user_input)}"\\n'
+                'raw_dynamic = rf"value:{exec(code)}"\\n',
+                encoding='utf-8',
+            )
+            found = scan(root)
+            self.assertEqual(
+                [(item['rule'], item['line']) for item in found],
+                [('PY-EVAL', 2), ('PY-EVAL', 3)],
+            )
+
     def test_serializes_findings_as_sarif(self):
         report = sarif_report([{
             'file': 'app.py', 'line': 4, 'rule': 'PY-EVAL',
