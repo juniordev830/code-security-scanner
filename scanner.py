@@ -63,9 +63,18 @@ def mask_python_literals(source: str) -> str:
     for line in lines:
         offsets.append(offsets[-1] + len(line))
     masked = list(source)
+    # Python 3.12+ exposes f-string expression tokens; mask only literal
+    # FSTRING_MIDDLE spans. Older versions expose an entire f-string as STRING.
+    # Preserve those whole tokens to avoid hiding eval/exec inside { ... }.
+    mask_types = {tokenize.STRING, tokenize.COMMENT}
+    fstring_middle = getattr(tokenize, 'FSTRING_MIDDLE', None)
+    if fstring_middle is not None:
+        mask_types.add(fstring_middle)
     try:
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
-            if token.type not in (tokenize.STRING, tokenize.COMMENT):
+            if token.type not in mask_types:
+                continue
+            if token.type == tokenize.STRING and re.match(r"(?i)^(?:fr|rf|f)['\\\"]", token.string):
                 continue
             start = offsets[token.start[0] - 1] + token.start[1]
             end = offsets[token.end[0] - 1] + token.end[1]
