@@ -1,16 +1,21 @@
 """Bounded, read-only static text scanner; heuristic findings, not proof of exploits."""
 from __future__ import annotations
 import argparse
+import io
 import json
 import re
+import tokenize
 from pathlib import Path
 
+PYTHON = frozenset({'.py'})
+JAVASCRIPT = frozenset({'.js', '.ts', '.jsx', '.tsx'})
 RULES = (
-    ('PY-EVAL', 'high', re.compile(r'\b(?:eval|exec)\s*\('), 'Dynamic Python execution'),
-    ('PY-SHELL', 'high', re.compile(r'\bshell\s*=\s*True\b'), 'Shell execution enabled'),
-    ('WEB-INNERHTML', 'medium', re.compile(r'\.innerHTML\s*='), 'Review DOM HTML insertion'),
+    ('PY-EVAL', 'high', re.compile(r'\b(?:eval|exec)\s*\('), 'Dynamic Python execution', PYTHON),
+    ('PY-SHELL', 'high', re.compile(r'\bshell\s*=\s*True\b'), 'Shell execution enabled', PYTHON),
+    ('JS-EVAL', 'high', re.compile(r'\beval\s*\('), 'Dynamic JavaScript execution', JAVASCRIPT),
+    ('WEB-INNERHTML', 'medium', re.compile(r'\.innerHTML\s*='), 'Review DOM HTML insertion', JAVASCRIPT),
 )
-EXTENSIONS = {'.py', '.js', '.ts', '.jsx', '.tsx'}
+EXTENSIONS = PYTHON | JAVASCRIPT
 SKIP = {'.git', 'node_modules', '.venv', 'dist', 'build', '__pycache__'}
 MAX_FILE_BYTES = 256_000
 
@@ -47,6 +52,131 @@ def sarif_report(findings: list[dict]) -> dict:
         }],
     }
 
+def mask_python_literals(source: str) -> str:
+    """Mask Python comments and strings, retaining line numbers for findings.
+
+    Falls back to the raw heuristic for incomplete or invalid Python, rather
+    than silently dropping findings while the file is being edited.
+    """
+    lines = source.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+    masked = list(source)
+    # Python 3.12+ exposes f-string expression tokens; mask only literal
+    # FSTRING_MIDDLE spans. Older versions expose an entire f-string as STRING.
+    # Preserve those whole tokens to avoid hiding eval/exec inside { ... }.
+    mask_types = {tokenize.STRING, tokenize.COMMENT}
+    fstring_middle = getattr(tokenize, 'FSTRING_MIDDLE', None)
+    if fstring_middle is not None:
+        mask_types.add(fstring_middle)
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type not in mask_types:
+                continue
+            if token.type == tokenize.STRING and re.match(r"(?i)^(?:fr|rf|f)['\\\"]", token.string):
+                continue
+            start = offsets[token.start[0] - 1] + token.start[1]
+            end = offsets[token.end[0] - 1] + token.end[1]
+            for index in range(start, end):
+                if masked[index] not in '\r\n':
+                    masked[index] = ' '
+    except (tokenize.TokenError, IndentationError):
+        return source
+    return ''.join(masked)
+
+
+
+def mask_javascript_literals(source: str) -> str:
+    """Mask JS comments and literal text, preserving template expressions.
+
+    This is a heuristic, not a full JavaScript/TypeScript parser. If syntax is
+    unfinished, preserve raw source instead of silently hiding findings.
+    """
+    masked = list(source)
+    length = len(source)
+
+    def hide(start: int, end: int) -> None:
+        for index in range(start, min(end, length)):
+            if source[index] not in '\r\n':
+                masked[index] = ' '
+
+    def quoted(start: int) -> int:
+        quote = source[start]
+        cursor = start + 1
+        while cursor < length:
+            if source[cursor] == '\\':
+                cursor += 2
+            elif source[cursor] == quote:
+                hide(start, cursor + 1)
+                return cursor + 1
+            else:
+                cursor += 1
+        raise ValueError('unfinished string')
+
+    def comment(start: int) -> int:
+        if source[start + 1] == '/':
+            end = source.find('\n', start + 2)
+            if end < 0:
+                end = length
+            hide(start, end)
+            return end
+        end = source.find('*/', start + 2)
+        if end < 0:
+            raise ValueError('unfinished block comment')
+        hide(start, end + 2)
+        return end + 2
+
+    def template(start: int) -> int:
+        hide(start, start + 1)
+        cursor = start + 1
+        while cursor < length:
+            if source[cursor] == '\\':
+                hide(cursor, cursor + 2)
+                cursor += 2
+            elif source[cursor] == chr(96):
+                hide(cursor, cursor + 1)
+                return cursor + 1
+            elif source.startswith(chr(36) + '{', cursor):
+                hide(cursor, cursor + 2)
+                cursor = code(cursor + 2, template_expr=True)
+            else:
+                hide(cursor, cursor + 1)
+                cursor += 1
+        raise ValueError('unfinished template')
+
+    def code(start: int, template_expr: bool = False) -> int:
+        depth = 1 if template_expr else 0
+        cursor = start
+        while cursor < length:
+            if source[cursor] in ("'", '"'):
+                cursor = quoted(cursor)
+            elif source[cursor] == chr(96):
+                cursor = template(cursor)
+            elif source[cursor] == '/' and cursor + 1 < length and source[cursor + 1] in '/*':
+                cursor = comment(cursor)
+            elif template_expr and source[cursor] == '{':
+                depth += 1
+                cursor += 1
+            elif template_expr and source[cursor] == '}':
+                depth -= 1
+                if depth == 0:
+                    hide(cursor, cursor + 1)
+                    return cursor + 1
+                cursor += 1
+            else:
+                cursor += 1
+        if template_expr:
+            raise ValueError('unfinished template interpolation')
+        return cursor
+
+    try:
+        code(0)
+    except ValueError:
+        return source
+    return ''.join(masked)
+
+
 def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
     root = root.resolve()
     skipped = SKIP | (exclude or set())
@@ -62,9 +192,15 @@ def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
             source = file.read_text(encoding='utf-8')
         except (OSError, UnicodeDecodeError):
             continue
-        for line_number, line in enumerate(source.splitlines(), 1):
-            for rule_id, severity, pattern, message in RULES:
-                if pattern.search(line):
+        if file.suffix.lower() in PYTHON:
+            searchable = mask_python_literals(source)
+        elif file.suffix.lower() in JAVASCRIPT:
+            searchable = mask_javascript_literals(source)
+        else:
+            searchable = source
+        for line_number, line in enumerate(searchable.splitlines(), 1):
+            for rule_id, severity, pattern, message, extensions in RULES:
+                if file.suffix.lower() in extensions and pattern.search(line):
                     findings.append({'file': file.relative_to(root).as_posix(),
                                      'line': line_number, 'rule': rule_id,
                                      'severity': severity, 'message': message})
