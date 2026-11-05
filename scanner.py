@@ -70,7 +70,7 @@ def mask_python_literals(source: str) -> str:
             start = offsets[token.start[0] - 1] + token.start[1]
             end = offsets[token.end[0] - 1] + token.end[1]
             for index in range(start, end):
-                if masked[index] not in '\\r\\n':
+                if masked[index] not in '\r\n':
                     masked[index] = ' '
     except (tokenize.TokenError, IndentationError):
         return source
