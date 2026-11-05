@@ -27,13 +27,13 @@ class ScannerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'examples.py').write_text(
-                '# eval(untrusted)\\n'
-                'description = "shell=True and exec(code)"\\n'
-                'documentation = """\\n'
-                'eval(malicious)\\n'
-                '"""\\n'
-                'result = eval(user_input)  # exec(ignored)\\n'
-                'subprocess.run(argv, shell=True)\\n',
+                '# eval(untrusted)\n'
+                'description = "shell=True and exec(code)"\n'
+                'documentation = """\n'
+                'eval(malicious)\n'
+                '"""\n'
+                'result = eval(user_input)  # exec(ignored)\n'
+                'subprocess.run(argv, shell=True)\n',
                 encoding='utf-8',
             )
             found = scan(root)
