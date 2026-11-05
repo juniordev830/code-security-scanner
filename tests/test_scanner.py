@@ -55,6 +55,83 @@ class ScannerTests(unittest.TestCase):
                 [('PY-EVAL', 2), ('PY-EVAL', 3)],
             )
 
+    def test_js_comments_and_strings_do_not_create_false_alarms(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'web.ts').write_text(
+                '// eval(in_comment)\n'
+                '/* node.innerHTML = in_comment\n'
+                'eval(in_comment) */\n'
+                'const harmless = "eval(in_string)";\n'
+                "const url = 'https://example.com';\n"
+                'eval(actual);\n'
+                'element.innerHTML = content;\n',
+                encoding='utf-8',
+            )
+            self.assertEqual(
+                [(item['rule'], item['line']) for item in scan(root)],
+                [('JS-EVAL', 6), ('WEB-INNERHTML', 7)],
+            )
+
+    def test_js_template_text_is_ignored_but_interpolation_is_scanned(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            tick = chr(96)
+            expression = '
+        report = sarif_report([{
+            'file': 'app.py', 'line': 4, 'rule': 'PY-EVAL',
+            'severity': 'high', 'message': 'Dynamic Python execution'
+        }])
+        self.assertEqual(report['version'], '2.1.0')
+        self.assertEqual(report['runs'][0]['results'][0]['ruleId'], 'PY-EVAL')
+        self.assertEqual(report['runs'][0]['results'][0]['locations'][0]['physicalLocation']['region']['startLine'], 4)
+
+    def test_skips_dependencies(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root/'node_modules').mkdir()
+            (root/'node_modules'/'bad.py').write_text('exec(code)')
+            self.assertEqual(scan(root), [])
+
+if __name__ == '__main__': unittest.main()
+ + '{eval(user)}'
+            (root / 'web.js').write_text(
+                'const text = ' + tick + 'eval(inert) ' + expression + tick + ';\n'
+                + 'const ignored = ' + tick + 'node.innerHTML = harmless' + tick + ';\n'
+                + 'const dynamic = ' + tick + '
+        report = sarif_report([{
+            'file': 'app.py', 'line': 4, 'rule': 'PY-EVAL',
+            'severity': 'high', 'message': 'Dynamic Python execution'
+        }])
+        self.assertEqual(report['version'], '2.1.0')
+        self.assertEqual(report['runs'][0]['results'][0]['ruleId'], 'PY-EVAL')
+        self.assertEqual(report['runs'][0]['results'][0]['locations'][0]['physicalLocation']['region']['startLine'], 4)
+
+    def test_skips_dependencies(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root/'node_modules').mkdir()
+            (root/'node_modules'/'bad.py').write_text('exec(code)')
+            self.assertEqual(scan(root), [])
+
+if __name__ == '__main__': unittest.main()
+ + '{({ key: eval(actual) })}' + tick + ';\n',
+                encoding='utf-8',
+            )
+            self.assertEqual(
+                [(item['rule'], item['line']) for item in scan(root)],
+                [('JS-EVAL', 1), ('JS-EVAL', 3)],
+            )
+
+    def test_js_incomplete_literal_falls_back_to_conservative_raw_scan(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'incomplete.js').write_text('const unfinished = "eval(foo)', encoding='utf-8')
+            self.assertEqual(
+                [(item['rule'], item['line']) for item in scan(root)],
+                [('JS-EVAL', 1)],
+            )
+
     def test_serializes_findings_as_sarif(self):
         report = sarif_report([{
             'file': 'app.py', 'line': 4, 'rule': 'PY-EVAL',
