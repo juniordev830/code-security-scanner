@@ -77,7 +77,28 @@ class ScannerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             tick = chr(96)
-            expression = '
+            expression = chr(36) + '{eval(user)}'
+            (root / 'web.js').write_text(
+                'const text = ' + tick + 'eval(inert) ' + expression + tick + ';\n'
+                + 'const ignored = ' + tick + 'node.innerHTML = harmless' + tick + ';\n'
+                + 'const dynamic = ' + tick + chr(36) + '{({ key: eval(actual) })}' + tick + ';\n',
+                encoding='utf-8',
+            )
+            self.assertEqual(
+                [(item['rule'], item['line']) for item in scan(root)],
+                [('JS-EVAL', 1), ('JS-EVAL', 3)],
+            )
+
+    def test_js_incomplete_literal_falls_back_to_conservative_raw_scan(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'incomplete.js').write_text('const unfinished = "eval(foo)', encoding='utf-8')
+            self.assertEqual(
+                [(item['rule'], item['line']) for item in scan(root)],
+                [('JS-EVAL', 1)],
+            )
+
+    def test_serializes_findings_as_sarif(self):
         report = sarif_report([{
             'file': 'app.py', 'line': 4, 'rule': 'PY-EVAL',
             'severity': 'high', 'message': 'Dynamic Python execution'
