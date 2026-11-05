@@ -26,7 +26,7 @@ O GitHub Actions executa os testes automaticamente em pushes e pull requests.
 
 ## Segurança e limitações
 
-Regras simples geram falsos positivos e falsos negativos; nunca executa os arquivos. Ignora dependências e arquivos >256 KB. Não substitui Semgrep, SAST nem auditoria de segurança.
+Regras simples geram falsos positivos e falsos negativos; nunca executa os arquivos. Para Python, o scanner mascara strings e comentários sem esconder expressões executáveis de f-strings (por exemplo, `f"{eval(data)}"`). Em Python 3.12+, trechos literais de f-strings são mascarados individualmente; versões antigas preservam a f-string inteira para evitar falsos negativos, o que pode aumentar falsos positivos. Ignora dependências e arquivos >256 KB. Não substitui Semgrep, SAST nem auditoria de segurança.
 
 ## Evolução planejada
 
