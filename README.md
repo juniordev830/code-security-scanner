@@ -11,6 +11,7 @@ Analisador estático **somente leitura**, baseado em regras; procura construçõ
 ```bash
 python scanner.py ./meu-projeto
 python scanner.py ./meu-projeto --exclude fixtures --fail-on medium
+python scanner.py ./meu-projeto --format sarif > scan-results.sarif
 ```
 
 Use `--exclude` com nomes de pastas para ignorar diretórios adicionais em qualquer nível. O argumento pode ser repetido. Com `--fail-on medium`, achados médios e altos retornam código 1. O padrão continua sendo `high`, e `none` mantém código 0 quando há achados.
@@ -25,11 +26,11 @@ O GitHub Actions executa os testes automaticamente em pushes e pull requests.
 
 ## Segurança e limitações
 
-Regras simples geram falsos positivos e falsos negativos; nunca executa os arquivos. Ignora dependências e arquivos >256 KB. Não substitui Semgrep, SAST nem auditoria de segurança.
+Regras simples geram falsos positivos e falsos negativos; nunca executa os arquivos. Não percorre dependências, pastas excluídas ou links simbólicos para diretórios. Ignora arquivos >256 KB. Não substitui Semgrep, SAST nem auditoria de segurança.
 
 ## Evolução planejada
 
-Integrar Semgrep e scanners de dependências, supressões justificadas e saída SARIF para GitHub Code Scanning.
+Integrar Semgrep e scanners de dependências, supressões justificadas e integração automática da saída SARIF já disponível com o GitHub Code Scanning.
 
 ---
 Projeto de Engenharia de Software mantido na conta [juniordev830](https://github.com/juniordev830).

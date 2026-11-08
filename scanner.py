@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 
@@ -51,23 +52,35 @@ def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
     root = root.resolve()
     skipped = SKIP | (exclude or set())
     findings = []
-    for file in sorted(root.rglob('*')):
-        if not file.is_file() or file.suffix.lower() not in EXTENSIONS:
-            continue
-        if any(part in skipped for part in file.relative_to(root).parts[:-1]):
-            continue
-        if file.is_symlink() or file.stat().st_size > MAX_FILE_BYTES:
-            continue
-        try:
-            source = file.read_text(encoding='utf-8')
-        except (OSError, UnicodeDecodeError):
-            continue
-        for line_number, line in enumerate(source.splitlines(), 1):
-            for rule_id, severity, pattern, message in RULES:
-                if pattern.search(line):
-                    findings.append({'file': file.relative_to(root).as_posix(),
-                                     'line': line_number, 'rule': rule_id,
-                                     'severity': severity, 'message': message})
+
+    # Prune excluded directories before traversal. Path.rglob() would still
+    # enumerate every nested file inside node_modules/.venv/dist/build.
+    for directory, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+        current = Path(directory)
+        dirnames[:] = sorted(
+            name for name in dirnames
+            if name not in skipped and not (current / name).is_symlink()
+        )
+
+        for filename in sorted(filenames):
+            file = current / filename
+            if file.suffix.lower() not in EXTENSIONS or file.is_symlink():
+                continue
+            try:
+                if file.stat().st_size > MAX_FILE_BYTES:
+                    continue
+                source = file.read_text(encoding='utf-8')
+            except (OSError, UnicodeDecodeError):
+                continue
+
+            for line_number, line in enumerate(source.splitlines(), 1):
+                for rule_id, severity, pattern, message in RULES:
+                    if pattern.search(line):
+                        findings.append({
+                            'file': file.relative_to(root).as_posix(),
+                            'line': line_number, 'rule': rule_id,
+                            'severity': severity, 'message': message,
+                        })
     return findings
 
 def main() -> int:
