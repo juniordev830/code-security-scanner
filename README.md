@@ -28,6 +28,12 @@ O GitHub Actions executa os testes automaticamente em pushes e pull requests.
 
 Regras simples geram falsos positivos e falsos negativos; nunca executa os arquivos. Não percorre dependências, pastas excluídas ou links simbólicos para diretórios. Ignora arquivos >256 KB. Não substitui Semgrep, SAST nem auditoria de segurança.
 
+A leitura de cada arquivo regular é limitada a **256.000 bytes**, mesmo que ele
+cresça depois da verificação de tamanho. Arquivos com UTF-8 inválido e links
+simbólicos são ignorados. Em sistemas POSIX, pipes nomeados são abertos sem
+bloqueio e descartados por não serem arquivos regulares. Arquivos ignorados não
+significam arquivos aprovados; a saída representa somente o conteúdo analisado.
+
 ## Evolução planejada
 
 Integrar Semgrep e scanners de dependências, supressões justificadas e integração automática da saída SARIF já disponível com o GitHub Code Scanning.

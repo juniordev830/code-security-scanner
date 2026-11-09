@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import stat
 from pathlib import Path
 
 RULES = (
@@ -14,6 +15,23 @@ RULES = (
 EXTENSIONS = {'.py', '.js', '.ts', '.jsx', '.tsx'}
 SKIP = {'.git', 'node_modules', '.venv', 'dist', 'build', '__pycache__'}
 MAX_FILE_BYTES = 256_000
+
+
+def _read_source(file: Path) -> str | None:
+    """Read only regular files, bounded even if their size changes after stat."""
+    flags = os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0) | getattr(os, 'O_NOFOLLOW', 0)
+    try:
+        descriptor = os.open(file, flags)
+        with os.fdopen(descriptor, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_FILE_BYTES:
+                return None
+            raw = stream.read(MAX_FILE_BYTES + 1)
+            if len(raw) > MAX_FILE_BYTES:
+                return None
+        return raw.decode('utf-8')
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 def sarif_report(findings: list[dict]) -> dict:
@@ -66,11 +84,8 @@ def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
             file = current / filename
             if file.suffix.lower() not in EXTENSIONS or file.is_symlink():
                 continue
-            try:
-                if file.stat().st_size > MAX_FILE_BYTES:
-                    continue
-                source = file.read_text(encoding='utf-8')
-            except (OSError, UnicodeDecodeError):
+            source = _read_source(file)
+            if source is None:
                 continue
 
             for line_number, line in enumerate(source.splitlines(), 1):
