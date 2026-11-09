@@ -1,15 +1,21 @@
 """Bounded, read-only static text scanner; heuristic findings, not proof of exploits."""
 from __future__ import annotations
 import argparse
+import io
 import json
 import os
 import re
+import tokenize
 from pathlib import Path
 
+# Match each rule only against languages it is intended to analyze.
 RULES = (
-    ('PY-EVAL', 'high', re.compile(r'\b(?:eval|exec)\s*\('), 'Dynamic Python execution'),
-    ('PY-SHELL', 'high', re.compile(r'\bshell\s*=\s*True\b'), 'Shell execution enabled'),
-    ('WEB-INNERHTML', 'medium', re.compile(r'\.innerHTML\s*='), 'Review DOM HTML insertion'),
+    ('PY-EVAL', 'high', re.compile(r'\b(?:eval|exec)\s*\('),
+     'Dynamic Python execution', frozenset({'.py'})),
+    ('PY-SHELL', 'high', re.compile(r'\bshell\s*=\s*True\b'),
+     'Shell execution enabled', frozenset({'.py'})),
+    ('WEB-INNERHTML', 'medium', re.compile(r'\.innerHTML\s*='),
+     'Review DOM HTML insertion', frozenset({'.js', '.ts', '.jsx', '.tsx'})),
 )
 EXTENSIONS = {'.py', '.js', '.ts', '.jsx', '.tsx'}
 SKIP = {'.git', 'node_modules', '.venv', 'dist', 'build', '__pycache__'}
@@ -48,6 +54,31 @@ def sarif_report(findings: list[dict]) -> dict:
         }],
     }
 
+
+def mask_python_literals(source: str) -> str:
+    """Blank Python strings and comments, preserving original line numbers.
+
+    This is a lexical filter, not an AST or semantic security analysis.
+    Syntax errors do not stop scanning content tokenized before the error.
+    """
+    lines = [list(line) for line in source.splitlines(keepends=True)]
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type not in (tokenize.STRING, tokenize.COMMENT):
+                continue
+            (start_line, start_col), (end_line, end_col) = token.start, token.end
+            for index in range(start_line - 1, end_line):
+                if index >= len(lines):
+                    break
+                left = start_col if index == start_line - 1 else 0
+                right = end_col if index == end_line - 1 else len(lines[index])
+                for column in range(left, min(right, len(lines[index]))):
+                    if lines[index][column] not in '\\r\\n':
+                        lines[index][column] = ' '
+    except (tokenize.TokenError, IndentationError):
+        pass
+    return ''.join(''.join(line) for line in lines)
+
 def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
     root = root.resolve()
     skipped = SKIP | (exclude or set())
@@ -73,9 +104,11 @@ def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
             except (OSError, UnicodeDecodeError):
                 continue
 
-            for line_number, line in enumerate(source.splitlines(), 1):
-                for rule_id, severity, pattern, message in RULES:
-                    if pattern.search(line):
+            extension = file.suffix.lower()
+            inspected = mask_python_literals(source) if extension == '.py' else source
+            for line_number, line in enumerate(inspected.splitlines(), 1):
+                for rule_id, severity, pattern, message, extensions in RULES:
+                    if extension in extensions and pattern.search(line):
                         findings.append({
                             'file': file.relative_to(root).as_posix(),
                             'line': line_number, 'rule': rule_id,
