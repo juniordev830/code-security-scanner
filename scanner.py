@@ -1,6 +1,7 @@
 """Bounded, read-only static text scanner; heuristic findings, not proof of exploits."""
 from __future__ import annotations
 import argparse
+import ast
 import io
 import json
 import os
@@ -62,9 +63,10 @@ def mask_python_literals(source: str) -> str:
     Syntax errors do not stop scanning content tokenized before the error.
     """
     lines = [list(line) for line in source.splitlines(keepends=True)]
+    literal_tokens = {tokenize.STRING, tokenize.COMMENT, getattr(tokenize, 'FSTRING_MIDDLE', -1)}
     try:
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
-            if token.type not in (tokenize.STRING, tokenize.COMMENT):
+            if token.type not in literal_tokens:
                 continue
             (start_line, start_col), (end_line, end_col) = token.start, token.end
             for index in range(start_line - 1, end_line):
@@ -78,6 +80,38 @@ def mask_python_literals(source: str) -> str:
     except (tokenize.TokenError, IndentationError):
         pass
     return ''.join(''.join(line) for line in lines)
+
+
+def python_call_findings(source: str) -> set[tuple[int, str]]:
+    """Find executable Python calls, including those in f-string expressions.
+
+    AST is used only for valid Python. On syntax errors the lexical scanner
+    remains a best-effort fallback; the source is never imported or executed.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return set()
+    found = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            callable_name = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            callable_name = node.func.attr
+        else:
+            callable_name = None
+        if callable_name in ('eval', 'exec'):
+            found.add((node.lineno, 'PY-EVAL'))
+        if any(
+            keyword.arg == 'shell'
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in node.keywords
+        ):
+            found.add((node.lineno, 'PY-SHELL'))
+    return found
 
 def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
     root = root.resolve()
@@ -106,15 +140,32 @@ def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
 
             extension = file.suffix.lower()
             inspected = mask_python_literals(source) if extension == '.py' else source
+            seen: set[tuple[int, str]] = set()
+            relative = file.relative_to(root).as_posix()
             for line_number, line in enumerate(inspected.splitlines(), 1):
                 for rule_id, severity, pattern, message, extensions in RULES:
                     if extension in extensions and pattern.search(line):
+                        key = (line_number, rule_id)
+                        if key in seen:
+                            continue
+                        seen.add(key)
                         findings.append({
-                            'file': file.relative_to(root).as_posix(),
-                            'line': line_number, 'rule': rule_id,
+                            'file': relative, 'line': line_number, 'rule': rule_id,
                             'severity': severity, 'message': message,
                         })
-    return findings
+            if extension == '.py':
+                python_rules = {rule: (level, message) for rule, level, _, message, _ in RULES}
+                for line_number, rule_id in sorted(python_call_findings(source)):
+                    key = (line_number, rule_id)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    severity, message = python_rules[rule_id]
+                    findings.append({
+                        'file': relative, 'line': line_number, 'rule': rule_id,
+                        'severity': severity, 'message': message,
+                    })
+    return sorted(findings, key=lambda item: (item['file'], item['line'], item['rule']))
 
 def main() -> int:
     cli = argparse.ArgumentParser(description='Read-only source scanner')
