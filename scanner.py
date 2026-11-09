@@ -73,7 +73,7 @@ def mask_python_literals(source: str) -> str:
                 left = start_col if index == start_line - 1 else 0
                 right = end_col if index == end_line - 1 else len(lines[index])
                 for column in range(left, min(right, len(lines[index]))):
-                    if lines[index][column] not in '\\r\\n':
+                    if lines[index][column] not in '\r\n':
                         lines[index][column] = ' '
     except (tokenize.TokenError, IndentationError):
         pass
