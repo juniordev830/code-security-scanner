@@ -16,14 +16,14 @@ class ScannerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'example.py').write_text(
-                'message = "eval(untrusted)"\\n'
-                '# exec(untrusted)\\n'
-                'documentation = """\\n'
-                'shell=True\\n'
-                'eval(data)\\n'
-                '"""\\n'
-                'value = eval(user_input)\\n'
-                'subprocess.run(command, shell=True)\\n',
+                'message = "eval(untrusted)"\n'
+                '# exec(untrusted)\n'
+                'documentation = """\n'
+                'shell=True\n'
+                'eval(data)\n'
+                '"""\n'
+                'value = eval(user_input)\n'
+                'subprocess.run(command, shell=True)\n',
                 encoding='utf-8',
             )
             result = scan(root)
@@ -36,10 +36,10 @@ class ScannerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'client.ts').write_text(
-                'eval(data);\\nnode.innerHTML = html;\\n', encoding='utf-8'
+                'eval(data);\nnode.innerHTML = html;\n', encoding='utf-8'
             )
             (root / 'logic.py').write_text(
-                'node.innerHTML = content\\nexec(code)\\n', encoding='utf-8'
+                'node.innerHTML = content\nexec(code)\n', encoding='utf-8'
             )
             result = scan(root)
             self.assertEqual(
