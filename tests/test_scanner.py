@@ -12,6 +12,41 @@ class ScannerTests(unittest.TestCase):
             found = scan(root)
             self.assertEqual({x['rule'] for x in found}, {'PY-EVAL', 'WEB-INNERHTML'})
             self.assertTrue(all(x['line'] == 1 for x in found))
+    def test_python_strings_and_comments_do_not_trigger_high_severity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'example.py').write_text(
+                'message = "eval(untrusted)"\\n'
+                '# exec(untrusted)\\n'
+                'documentation = """\\n'
+                'shell=True\\n'
+                'eval(data)\\n'
+                '"""\\n'
+                'value = eval(user_input)\\n'
+                'subprocess.run(command, shell=True)\\n',
+                encoding='utf-8',
+            )
+            result = scan(root)
+            self.assertEqual(
+                [(item['line'], item['rule']) for item in result],
+                [(7, 'PY-EVAL'), (8, 'PY-SHELL')],
+            )
+
+    def test_rules_apply_only_to_supported_languages(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'client.ts').write_text(
+                'eval(data);\\nnode.innerHTML = html;\\n', encoding='utf-8'
+            )
+            (root / 'logic.py').write_text(
+                'node.innerHTML = content\\nexec(code)\\n', encoding='utf-8'
+            )
+            result = scan(root)
+            self.assertEqual(
+                {(item['file'], item['rule']) for item in result},
+                {('client.ts', 'WEB-INNERHTML'), ('logic.py', 'PY-EVAL')},
+            )
+
     def test_serializes_findings_as_sarif(self):
         report = sarif_report([{
             'file': 'app.py', 'line': 4, 'rule': 'PY-EVAL',
