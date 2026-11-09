@@ -72,6 +72,49 @@ class ScannerTests(unittest.TestCase):
             )
             self.assertEqual(scan(root), [])
 
+
+    def test_valid_python_uses_ast_instead_of_false_positive_regex(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'clean.py').write_text(
+                'shell = True\n'
+                'def eval(value):\n'
+                '    return value\n'
+                'message = "exec(code)"\n'
+                'unrelated = shell\n',
+                encoding='utf-8',
+            )
+            self.assertEqual(scan(root), [])
+
+    def test_ast_detects_multiline_calls_without_spurious_assignments(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'calls.py').write_text(
+                'shell = True\n'
+                'value = eval(\n'
+                '    payload\n'
+                ')\n'
+                'subprocess.run(command, shell=True)\n',
+                encoding='utf-8',
+            )
+            self.assertEqual(
+                [(item['line'], item['rule']) for item in scan(root)],
+                [(2, 'PY-EVAL'), (5, 'PY-SHELL')],
+            )
+
+    def test_syntax_invalid_python_still_uses_lexical_fallback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'broken.py').write_text(
+                'eval(payload)\n'
+                'def broken(:\n',
+                encoding='utf-8',
+            )
+            self.assertEqual(
+                [(item['line'], item['rule']) for item in scan(root)],
+                [(1, 'PY-EVAL')],
+            )
+
     def test_serializes_findings_as_sarif(self):
         report = sarif_report([{
             'file': 'app.py', 'line': 4, 'rule': 'PY-EVAL',
