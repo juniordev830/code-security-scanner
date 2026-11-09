@@ -82,7 +82,7 @@ def mask_python_literals(source: str) -> str:
     return ''.join(''.join(line) for line in lines)
 
 
-def python_call_findings(source: str) -> set[tuple[int, str]]:
+def python_call_findings(source: str) -> set[tuple[int, str]] | None:
     """Find executable Python calls, including those in f-string expressions.
 
     AST is used only for valid Python. On syntax errors the lexical scanner
@@ -90,8 +90,8 @@ def python_call_findings(source: str) -> set[tuple[int, str]]:
     """
     try:
         tree = ast.parse(source)
-    except (SyntaxError, ValueError):
-        return set()
+    except (SyntaxError, ValueError, RecursionError):
+        return None
     found = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -139,32 +139,34 @@ def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
                 continue
 
             extension = file.suffix.lower()
-            inspected = mask_python_literals(source) if extension == '.py' else source
-            seen: set[tuple[int, str]] = set()
             relative = file.relative_to(root).as_posix()
-            for line_number, line in enumerate(inspected.splitlines(), 1):
-                for rule_id, severity, pattern, message, extensions in RULES:
-                    if extension in extensions and pattern.search(line):
-                        key = (line_number, rule_id)
-                        if key in seen:
-                            continue
-                        seen.add(key)
+            # A valid Python AST is authoritative: regexes would otherwise
+            # flag harmless assignments and function declarations.
+            if extension == '.py':
+                calls = python_call_findings(source)
+                if calls is not None:
+                    python_rules = {
+                        rule: (level, message)
+                        for rule, level, _, message, _ in RULES
+                    }
+                    for line_number, rule_id in sorted(calls):
+                        severity, message = python_rules[rule_id]
                         findings.append({
                             'file': relative, 'line': line_number, 'rule': rule_id,
                             'severity': severity, 'message': message,
                         })
-            if extension == '.py':
-                python_rules = {rule: (level, message) for rule, level, _, message, _ in RULES}
-                for line_number, rule_id in sorted(python_call_findings(source)):
-                    key = (line_number, rule_id)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    severity, message = python_rules[rule_id]
-                    findings.append({
-                        'file': relative, 'line': line_number, 'rule': rule_id,
-                        'severity': severity, 'message': message,
-                    })
+                    continue
+
+            # Syntax-invalid Python still gets a best-effort lexical scan.
+            # JavaScript/TypeScript always use the documented regex heuristic.
+            inspected = mask_python_literals(source) if extension == '.py' else source
+            for line_number, line in enumerate(inspected.splitlines(), 1):
+                for rule_id, severity, pattern, message, extensions in RULES:
+                    if extension in extensions and pattern.search(line):
+                        findings.append({
+                            'file': relative, 'line': line_number, 'rule': rule_id,
+                            'severity': severity, 'message': message,
+                        })
     return sorted(findings, key=lambda item: (item['file'], item['line'], item['rule']))
 
 def main() -> int:
