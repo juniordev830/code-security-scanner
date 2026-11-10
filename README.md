@@ -26,7 +26,7 @@ O GitHub Actions executa os testes automaticamente em pushes e pull requests.
 
 ## Segurança e limitações
 
-Regras simples geram falsos positivos e falsos negativos; nunca executa os arquivos. Não percorre dependências, pastas excluídas ou links simbólicos para diretórios. Ignora arquivos >256 KB. Não substitui Semgrep, SAST nem auditoria de segurança.
+Regras simples geram falsos positivos e falsos negativos; nunca executa os arquivos. As regras `PY-EVAL` e `PY-SHELL` são aplicadas somente a Python, enquanto `WEB-INNERHTML` verifica JavaScript/TypeScript (inclusive JSX/TSX). Em arquivos Python com sintaxe válida, utiliza a AST para detectar chamadas (inclusive nas expressões de f-strings), evitando falsos positivos de atribuições e declarações. Quando não é possível analisar a sintaxe, usa um fallback lexical que mascara strings e comentários. Não executa o código analisado. Mantém a numeração das linhas. Não é uma análise de fluxo: aliases e chamadas dinâmicas ainda podem escapar, e arquivos com sintaxe inválida recebem apenas uma verificação heurística. Regras web continuam heurísticas. Não percorre dependências, pastas excluídas ou links simbólicos para diretórios. Ignora arquivos >256 KB. Não substitui Semgrep, SAST nem auditoria de segurança.
 
 ## Evolução planejada
 

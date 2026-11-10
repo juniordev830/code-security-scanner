@@ -1,15 +1,22 @@
 """Bounded, read-only static text scanner; heuristic findings, not proof of exploits."""
 from __future__ import annotations
 import argparse
+import ast
+import io
 import json
 import os
 import re
+import tokenize
 from pathlib import Path
 
+# Match each rule only against languages it is intended to analyze.
 RULES = (
-    ('PY-EVAL', 'high', re.compile(r'\b(?:eval|exec)\s*\('), 'Dynamic Python execution'),
-    ('PY-SHELL', 'high', re.compile(r'\bshell\s*=\s*True\b'), 'Shell execution enabled'),
-    ('WEB-INNERHTML', 'medium', re.compile(r'\.innerHTML\s*='), 'Review DOM HTML insertion'),
+    ('PY-EVAL', 'high', re.compile(r'\b(?:eval|exec)\s*\('),
+     'Dynamic Python execution', frozenset({'.py'})),
+    ('PY-SHELL', 'high', re.compile(r'\bshell\s*=\s*True\b'),
+     'Shell execution enabled', frozenset({'.py'})),
+    ('WEB-INNERHTML', 'medium', re.compile(r'\.innerHTML\s*='),
+     'Review DOM HTML insertion', frozenset({'.js', '.ts', '.jsx', '.tsx'})),
 )
 EXTENSIONS = {'.py', '.js', '.ts', '.jsx', '.tsx'}
 SKIP = {'.git', 'node_modules', '.venv', 'dist', 'build', '__pycache__'}
@@ -48,6 +55,64 @@ def sarif_report(findings: list[dict]) -> dict:
         }],
     }
 
+
+def mask_python_literals(source: str) -> str:
+    """Blank Python strings and comments, preserving original line numbers.
+
+    This is a lexical filter, not an AST or semantic security analysis.
+    Syntax errors do not stop scanning content tokenized before the error.
+    """
+    lines = [list(line) for line in source.splitlines(keepends=True)]
+    literal_tokens = {tokenize.STRING, tokenize.COMMENT, getattr(tokenize, 'FSTRING_MIDDLE', -1)}
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type not in literal_tokens:
+                continue
+            (start_line, start_col), (end_line, end_col) = token.start, token.end
+            for index in range(start_line - 1, end_line):
+                if index >= len(lines):
+                    break
+                left = start_col if index == start_line - 1 else 0
+                right = end_col if index == end_line - 1 else len(lines[index])
+                for column in range(left, min(right, len(lines[index]))):
+                    if lines[index][column] not in '\r\n':
+                        lines[index][column] = ' '
+    except (tokenize.TokenError, IndentationError):
+        pass
+    return ''.join(''.join(line) for line in lines)
+
+
+def python_call_findings(source: str) -> set[tuple[int, str]] | None:
+    """Find executable Python calls, including those in f-string expressions.
+
+    AST is used only for valid Python. On syntax errors the lexical scanner
+    remains a best-effort fallback; the source is never imported or executed.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return None
+    found = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            callable_name = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            callable_name = node.func.attr
+        else:
+            callable_name = None
+        if callable_name in ('eval', 'exec'):
+            found.add((node.lineno, 'PY-EVAL'))
+        if any(
+            keyword.arg == 'shell'
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in node.keywords
+        ):
+            found.add((node.lineno, 'PY-SHELL'))
+    return found
+
 def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
     root = root.resolve()
     skipped = SKIP | (exclude or set())
@@ -73,15 +138,36 @@ def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
             except (OSError, UnicodeDecodeError):
                 continue
 
-            for line_number, line in enumerate(source.splitlines(), 1):
-                for rule_id, severity, pattern, message in RULES:
-                    if pattern.search(line):
+            extension = file.suffix.lower()
+            relative = file.relative_to(root).as_posix()
+            # A valid Python AST is authoritative: regexes would otherwise
+            # flag harmless assignments and function declarations.
+            if extension == '.py':
+                calls = python_call_findings(source)
+                if calls is not None:
+                    python_rules = {
+                        rule: (level, message)
+                        for rule, level, _, message, _ in RULES
+                    }
+                    for line_number, rule_id in sorted(calls):
+                        severity, message = python_rules[rule_id]
                         findings.append({
-                            'file': file.relative_to(root).as_posix(),
-                            'line': line_number, 'rule': rule_id,
+                            'file': relative, 'line': line_number, 'rule': rule_id,
                             'severity': severity, 'message': message,
                         })
-    return findings
+                    continue
+
+            # Syntax-invalid Python still gets a best-effort lexical scan.
+            # JavaScript/TypeScript always use the documented regex heuristic.
+            inspected = mask_python_literals(source) if extension == '.py' else source
+            for line_number, line in enumerate(inspected.splitlines(), 1):
+                for rule_id, severity, pattern, message, extensions in RULES:
+                    if extension in extensions and pattern.search(line):
+                        findings.append({
+                            'file': relative, 'line': line_number, 'rule': rule_id,
+                            'severity': severity, 'message': message,
+                        })
+    return sorted(findings, key=lambda item: (item['file'], item['line'], item['rule']))
 
 def main() -> int:
     cli = argparse.ArgumentParser(description='Read-only source scanner')

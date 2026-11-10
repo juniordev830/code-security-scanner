@@ -12,6 +12,109 @@ class ScannerTests(unittest.TestCase):
             found = scan(root)
             self.assertEqual({x['rule'] for x in found}, {'PY-EVAL', 'WEB-INNERHTML'})
             self.assertTrue(all(x['line'] == 1 for x in found))
+    def test_python_strings_and_comments_do_not_trigger_high_severity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'example.py').write_text(
+                'message = "eval(untrusted)"\n'
+                '# exec(untrusted)\n'
+                'documentation = """\n'
+                'shell=True\n'
+                'eval(data)\n'
+                '"""\n'
+                'value = eval(user_input)\n'
+                'subprocess.run(command, shell=True)\n',
+                encoding='utf-8',
+            )
+            result = scan(root)
+            self.assertEqual(
+                [(item['line'], item['rule']) for item in result],
+                [(7, 'PY-EVAL'), (8, 'PY-SHELL')],
+            )
+
+    def test_rules_apply_only_to_supported_languages(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'client.ts').write_text(
+                'eval(data);\nnode.innerHTML = html;\n', encoding='utf-8'
+            )
+            (root / 'logic.py').write_text(
+                'node.innerHTML = content\nexec(code)\n', encoding='utf-8'
+            )
+            result = scan(root)
+            self.assertEqual(
+                {(item['file'], item['rule']) for item in result},
+                {('client.ts', 'WEB-INNERHTML'), ('logic.py', 'PY-EVAL')},
+            )
+
+    def test_detects_executable_calls_inside_fstrings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'sample.py').write_text(
+                'example = f"literal eval(fake) shell=True"\n'
+                'danger = f"result {eval(untrusted)}"\n'
+                'run = f"{subprocess.run(command, shell=True)}"\n'
+                'normal = exec(code)\n',
+                encoding='utf-8',
+            )
+            found = scan(root)
+            self.assertEqual(
+                [(item['line'], item['rule']) for item in found],
+                [(2, 'PY-EVAL'), (3, 'PY-SHELL'), (4, 'PY-EVAL')],
+            )
+
+    def test_ignores_fstring_literal_text_not_evaluated_as_code(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'sample.py').write_text(
+                'message = f"literal eval(foo) shell=True"\n',
+                encoding='utf-8',
+            )
+            self.assertEqual(scan(root), [])
+
+
+    def test_valid_python_uses_ast_instead_of_false_positive_regex(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'clean.py').write_text(
+                'shell = True\n'
+                'def eval(value):\n'
+                '    return value\n'
+                'message = "exec(code)"\n'
+                'unrelated = shell\n',
+                encoding='utf-8',
+            )
+            self.assertEqual(scan(root), [])
+
+    def test_ast_detects_multiline_calls_without_spurious_assignments(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'calls.py').write_text(
+                'shell = True\n'
+                'value = eval(\n'
+                '    payload\n'
+                ')\n'
+                'subprocess.run(command, shell=True)\n',
+                encoding='utf-8',
+            )
+            self.assertEqual(
+                [(item['line'], item['rule']) for item in scan(root)],
+                [(2, 'PY-EVAL'), (5, 'PY-SHELL')],
+            )
+
+    def test_syntax_invalid_python_still_uses_lexical_fallback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'broken.py').write_text(
+                'eval(payload)\n'
+                'def broken(:\n',
+                encoding='utf-8',
+            )
+            self.assertEqual(
+                [(item['line'], item['rule']) for item in scan(root)],
+                [(1, 'PY-EVAL')],
+            )
+
     def test_serializes_findings_as_sarif(self):
         report = sarif_report([{
             'file': 'app.py', 'line': 4, 'rule': 'PY-EVAL',
