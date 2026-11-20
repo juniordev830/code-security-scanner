@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import stat
 import tokenize
 from pathlib import Path
 
@@ -21,6 +22,7 @@ RULES = (
 EXTENSIONS = {'.py', '.js', '.ts', '.jsx', '.tsx'}
 SKIP = {'.git', 'node_modules', '.venv', 'dist', 'build', '__pycache__'}
 MAX_FILE_BYTES = 256_000
+INCOMPLETE_SCAN_RULE = 'SCAN-INCOMPLETE'
 
 
 def sarif_report(findings: list[dict]) -> dict:
@@ -113,14 +115,39 @@ def python_call_findings(source: str) -> set[tuple[int, str]] | None:
             found.add((node.lineno, 'PY-SHELL'))
     return found
 
+
+def incomplete_finding(root: Path, path: str | os.PathLike, message: str) -> dict:
+    """Represent an unscanned source path as a high-severity finding."""
+    candidate = Path(path)
+    try:
+        relative = candidate.resolve(strict=False).relative_to(root).as_posix()
+    except (OSError, ValueError):
+        relative = candidate.name or '.'
+    return {
+        'file': relative,
+        'line': 1,
+        'rule': INCOMPLETE_SCAN_RULE,
+        'severity': 'high',
+        'message': message,
+    }
+
+
 def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
     root = root.resolve()
     skipped = SKIP | (exclude or set())
     findings = []
 
+    def on_walk_error(error: OSError) -> None:
+        findings.append(incomplete_finding(
+            root, error.filename or root,
+            'Directory could not be traversed; scan is incomplete',
+        ))
+
     # Prune excluded directories before traversal. Path.rglob() would still
     # enumerate every nested file inside node_modules/.venv/dist/build.
-    for directory, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+    for directory, dirnames, filenames in os.walk(
+        root, topdown=True, onerror=on_walk_error, followlinks=False
+    ):
         current = Path(directory)
         dirnames[:] = sorted(
             name for name in dirnames
@@ -131,15 +158,43 @@ def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
             file = current / filename
             if file.suffix.lower() not in EXTENSIONS or file.is_symlink():
                 continue
+            relative = file.relative_to(root).as_posix()
             try:
-                if file.stat().st_size > MAX_FILE_BYTES:
+                if not file.is_file():
+                    findings.append(incomplete_finding(
+                        root, file, 'Source path is not a regular file; scan is incomplete'
+                    ))
                     continue
-                source = file.read_text(encoding='utf-8')
-            except (OSError, UnicodeDecodeError):
+
+                # O_NOFOLLOW prevents a symlink swap where supported; O_NONBLOCK
+                # prevents special files such as FIFOs from blocking the scan.
+                flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+                descriptor = os.open(file, flags)
+                with os.fdopen(descriptor, 'rb') as stream:
+                    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                        findings.append(incomplete_finding(
+                            root, file, 'Source path is not a regular file; scan is incomplete'
+                        ))
+                        continue
+                    raw = stream.read(MAX_FILE_BYTES + 1)
+                if len(raw) > MAX_FILE_BYTES:
+                    findings.append(incomplete_finding(
+                        root, file, 'File exceeds 256 KB and was not scanned'
+                    ))
+                    continue
+                source = raw.decode('utf-8')
+            except UnicodeDecodeError:
+                findings.append(incomplete_finding(
+                    root, file, 'Source file is not valid UTF-8 and was not scanned'
+                ))
+                continue
+            except OSError:
+                findings.append(incomplete_finding(
+                    root, file, 'Source file could not be read; scan is incomplete'
+                ))
                 continue
 
             extension = file.suffix.lower()
-            relative = file.relative_to(root).as_posix()
             # A valid Python AST is authoritative: regexes would otherwise
             # flag harmless assignments and function declarations.
             if extension == '.py':
@@ -169,6 +224,7 @@ def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
                         })
     return sorted(findings, key=lambda item: (item['file'], item['line'], item['rule']))
 
+
 def main() -> int:
     cli = argparse.ArgumentParser(description='Read-only source scanner')
     cli.add_argument('directory', nargs='?', default='.')
@@ -190,9 +246,13 @@ def main() -> int:
         'total': len(findings),
     }
     print(json.dumps(report, indent=2))
+    # A partial scan is never considered clean, even with --fail-on none.
+    if any(item['rule'] == INCOMPLETE_SCAN_RULE for item in findings):
+        return 2
     severities = {'high': 2, 'medium': 1}
     thresholds = {'high': 2, 'medium': 1, 'none': 3}
     return 1 if any(severities[x['severity']] >= thresholds[args.fail_on] for x in findings) else 0
+
 
 if __name__ == '__main__':
     raise SystemExit(main())
