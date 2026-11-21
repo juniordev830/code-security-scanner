@@ -41,3 +41,5 @@ Projeto de Engenharia de Software mantido na conta [juniordev830](https://github
 ## Verificação antes de contribuir
 
 O [guia de validação](docs/GUIA_DE_VALIDACAO.md) descreve o estado do código, as verificações reproduzíveis e os riscos a observar ao revisar novas alterações.
+
+Ao integrar a biblioteca diretamente em outro sistema, `scan()` agora exige uma pasta existente e aceita apenas nomes simples de diretórios em `exclude`. Caminhos de arquivos, diretórios ausentes ou exclusões com `../` e separadores retornam erro em vez de serem tratados como uma análise limpa. A CLI mantém os mesmos critérios.
