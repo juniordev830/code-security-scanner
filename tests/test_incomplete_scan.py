@@ -95,5 +95,17 @@ class IncompleteScanTests(unittest.TestCase):
             self.assertEqual(report['findings'][0]['rule'], 'SCAN-INCOMPLETE')
 
 
+
+    def test_library_scan_rejects_missing_or_file_roots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            file = root / 'single.py'
+            file.write_text('print(1)', encoding='utf-8')
+            with self.assertRaises(ValueError):
+                scanner.scan(file)
+            with self.assertRaises(ValueError):
+                scanner.scan(root / 'missing')
+
+
 if __name__ == '__main__':
     unittest.main()
