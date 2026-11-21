@@ -51,5 +51,15 @@ class DirectoryPruningTests(unittest.TestCase):
                              [('source/sample.py', 'PY-EVAL')])
 
 
+
+    def test_library_scan_rejects_invalid_exclusion_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('', '.', '..', '../outside', 'nested/path', 'nested\\\\path'):
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    scan(root, exclude={name})
+            self.assertEqual(scan(root, exclude={'fixtures'}), [])
+
+
 if __name__ == '__main__':
     unittest.main()
