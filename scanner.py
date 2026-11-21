@@ -134,6 +134,8 @@ def incomplete_finding(root: Path, path: str | os.PathLike, message: str) -> dic
 
 def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
     root = root.resolve()
+    if not root.is_dir():
+        raise ValueError('Scan root must be an existing directory')
     skipped = SKIP | (exclude or set())
     findings = []
 
