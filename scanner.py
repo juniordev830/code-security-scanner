@@ -136,6 +136,11 @@ def scan(root: Path, exclude: set[str] | None = None) -> list[dict]:
     root = root.resolve()
     if not root.is_dir():
         raise ValueError('Scan root must be an existing directory')
+    if exclude is not None and any(
+        not isinstance(name, str) or not name or name in {'.', '..'}
+        or '/' in name or '\\' in name for name in exclude
+    ):
+        raise ValueError('Exclude entries must be plain directory names')
     skipped = SKIP | (exclude or set())
     findings = []
 
