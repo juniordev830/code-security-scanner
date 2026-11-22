@@ -102,6 +102,22 @@ class ScannerTests(unittest.TestCase):
                 [(2, 'PY-EVAL'), (5, 'PY-SHELL')],
             )
 
+    def test_shell_true_only_flags_subprocess_calls(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'shell.py').write_text(
+                'def harmless(*, shell): return shell\\n'
+                'harmless(shell=True)\\n'
+                'subprocess.run(command, shell=True)\\n'
+                'subprocess.Popen(command, shell=True)\\n'
+                'subprocess.check_output(command, shell=True)\\n',
+                encoding='utf-8',
+            )
+            self.assertEqual(
+                [(item['line'], item['rule']) for item in scan(root)],
+                [(3, 'PY-SHELL'), (4, 'PY-SHELL'), (5, 'PY-SHELL')],
+            )
+
     def test_syntax_invalid_python_still_uses_lexical_fallback(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
