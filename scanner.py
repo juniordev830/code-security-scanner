@@ -113,11 +113,17 @@ def python_call_findings(source: str) -> set[tuple[int, str]] | None:
                 and isinstance(node.func.value, ast.Name)
                 and node.func.value.id == 'os'):
             found.add((node.lineno, 'PY-OS-SYSTEM'))
-        if any(
-            keyword.arg == 'shell'
-            and isinstance(keyword.value, ast.Constant)
-            and keyword.value.value is True
-            for keyword in node.keywords
+        if (
+            isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == 'subprocess'
+            and node.func.attr in {'run', 'Popen', 'call', 'check_call', 'check_output'}
+            and any(
+                keyword.arg == 'shell'
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value is True
+                for keyword in node.keywords
+            )
         ):
             found.add((node.lineno, 'PY-SHELL'))
     return found
