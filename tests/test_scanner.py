@@ -118,6 +118,21 @@ class ScannerTests(unittest.TestCase):
                 [(3, 'PY-SHELL'), (4, 'PY-SHELL'), (5, 'PY-SHELL')],
             )
 
+    def test_subprocess_call_and_check_call_shell_flags(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'commands.py').write_text(
+                'subprocess.call(command, shell=True)\n'
+                'subprocess.check_call(command, shell=True)\n'
+                'subprocess.run(command, shell=False)\n'
+                'other.call(command, shell=True)\n',
+                encoding='utf-8',
+            )
+            self.assertEqual(
+                [(item['line'], item['rule']) for item in scan(root)],
+                [(1, 'PY-SHELL'), (2, 'PY-SHELL')],
+            )
+
     def test_syntax_invalid_python_still_uses_lexical_fallback(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
