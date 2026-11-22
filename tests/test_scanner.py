@@ -106,11 +106,11 @@ class ScannerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / 'shell.py').write_text(
-                'def harmless(*, shell): return shell\\n'
-                'harmless(shell=True)\\n'
-                'subprocess.run(command, shell=True)\\n'
-                'subprocess.Popen(command, shell=True)\\n'
-                'subprocess.check_output(command, shell=True)\\n',
+                'def harmless(*, shell): return shell\n'
+                'harmless(shell=True)\n'
+                'subprocess.run(command, shell=True)\n'
+                'subprocess.Popen(command, shell=True)\n'
+                'subprocess.check_output(command, shell=True)\n',
                 encoding='utf-8',
             )
             self.assertEqual(
