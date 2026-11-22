@@ -16,6 +16,8 @@ RULES = (
      'Dynamic Python execution', frozenset({'.py'})),
     ('PY-SHELL', 'high', re.compile(r'\bshell\s*=\s*True\b'),
      'Shell execution enabled', frozenset({'.py'})),
+    ('PY-OS-SYSTEM', 'high', re.compile(r'\bos\.system\s*\('),
+     'Direct shell command execution', frozenset({'.py'})),
     ('WEB-INNERHTML', 'medium', re.compile(r'\.innerHTML\s*='),
      'Review DOM HTML insertion', frozenset({'.js', '.ts', '.jsx', '.tsx'})),
 )
@@ -106,6 +108,11 @@ def python_call_findings(source: str) -> set[tuple[int, str]] | None:
             callable_name = None
         if callable_name in ('eval', 'exec'):
             found.add((node.lineno, 'PY-EVAL'))
+        if (isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'system'
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == 'os'):
+            found.add((node.lineno, 'PY-OS-SYSTEM'))
         if any(
             keyword.arg == 'shell'
             and isinstance(keyword.value, ast.Constant)
