@@ -106,7 +106,7 @@ def python_call_findings(source: str) -> set[tuple[int, str]] | None:
             callable_name = node.func.attr
         else:
             callable_name = None
-        if callable_name in ('eval', 'exec'):
+        if isinstance(node.func, ast.Name) and callable_name in ('eval', 'exec'):
             found.add((node.lineno, 'PY-EVAL'))
         if (isinstance(node.func, ast.Attribute)
                 and node.func.attr == 'system'
