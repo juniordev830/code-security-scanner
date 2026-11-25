@@ -97,6 +97,15 @@ def python_call_findings(source: str) -> set[tuple[int, str]] | None:
     except (SyntaxError, ValueError, RecursionError):
         return None
     found = set()
+    os_aliases = {'os'}
+    system_aliases = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            os_aliases.update(alias.asname or 'os' for alias in node.names if alias.name == 'os')
+        elif isinstance(node, ast.ImportFrom) and node.module == 'os':
+            system_aliases.update(
+                alias.asname or 'system' for alias in node.names if alias.name == 'system'
+            )
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -108,10 +117,13 @@ def python_call_findings(source: str) -> set[tuple[int, str]] | None:
             callable_name = None
         if isinstance(node.func, ast.Name) and callable_name in ('eval', 'exec'):
             found.add((node.lineno, 'PY-EVAL'))
-        if (isinstance(node.func, ast.Attribute)
-                and node.func.attr == 'system'
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == 'os'):
+        if (
+            (isinstance(node.func, ast.Attribute)
+             and node.func.attr == 'system'
+             and isinstance(node.func.value, ast.Name)
+             and node.func.value.id in os_aliases)
+            or (isinstance(node.func, ast.Name) and node.func.id in system_aliases)
+        ):
             found.add((node.lineno, 'PY-OS-SYSTEM'))
         if (
             isinstance(node.func, ast.Attribute)
